@@ -5,6 +5,9 @@ const express = require('express');
 const mongoose = require('mongoose');
 
 const Project = require('../models/Project');
+const Employee = require('../models/Employee');
+const Allocation = require('../models/Allocation');
+const { scoreEmployee } = require('../utils/scoring');
 
 const router = express.Router();
 
@@ -138,6 +141,142 @@ router.get('/', async (req, res) => {
     res.json(projects);
   } catch (err) {
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// POST /api/projects/:id/match
+router.post('/:id/match', async (req, res) => {
+  const { id } = req.params;
+
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ message: 'Invalid project ID' });
+  }
+
+  try {
+    const project = await Project.findById(id);
+
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    if (project.requiredSkills.length === 0) {
+      return res.status(400).json({ message: 'Project has no required skills' });
+    }
+
+    if (project.requiredSkills.every((skill) => skill.weight === 0)) {
+      return res.status(400).json({ message: 'Generate AI weights first' });
+    }
+
+    await Allocation.deleteMany({ project: project._id, status: 'proposed' });
+
+    const employees = await Employee.find();
+    if (employees.length === 0) {
+      return res.json({ matches: [] });
+    }
+
+    const scoredEmployees = [];
+    for (const employee of employees) {
+      try {
+        const result = scoreEmployee(employee, project);
+        scoredEmployees.push({ employee, ...result });
+      } catch (err) {
+        console.error(`Could not score employee ${employee._id}:`, err);
+      }
+    }
+
+    const topMatches = scoredEmployees.sort((a, b) => b.score - a.score).slice(0, 5);
+
+    const matchesWithExplanations = await Promise.all(
+      topMatches.map(async (match) => {
+        const bestSkill = match.breakdown.reduce((best, item) => {
+          return item.match * item.weight > best.match * best.weight ? item : best;
+        }, match.breakdown[0]);
+
+        let explanation = `${match.employee.name} scored ${match.score} (${match.verdict}). Top match: ${bestSkill ? bestSkill.skillName : 'none'}.`;
+
+        try {
+          const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${process.env.LLM_API_KEY}`,
+            },
+            body: JSON.stringify({
+              model: 'openai/gpt-oss-120b',
+              response_format: { type: 'json_object' },
+              messages: [
+                {
+                  role: 'system',
+                  content:
+                    'You write a 2-sentence explanation of why an employee received a suitability score. Use ONLY the numbers provided. Do not invent skills or facts. Respond with JSON only: {"explanation":"..."}',
+                },
+                {
+                  role: 'user',
+                  content: `Employee: ${match.employee.name}\nProject: ${project.name}\nScore: ${match.score} (${match.verdict})\nPer-skill breakdown:\n${match.breakdown
+                    .map((item) => `${item.skillName}: match ${item.match}, weight ${item.weight}`)
+                    .join('\n')}`,
+                },
+              ],
+              temperature: 0.3,
+            }),
+          });
+
+          if (!response.ok) {
+            throw new Error(`Groq API returned status ${response.status}`);
+          }
+
+          const data = await response.json();
+          const text = data.choices[0].message.content;
+          const jsonText = text.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
+          const parsed = JSON.parse(jsonText);
+
+          if (typeof parsed.explanation !== 'string' || parsed.explanation.trim().length === 0) {
+            throw new Error('AI returned an empty explanation');
+          }
+
+          explanation = parsed.explanation.trim();
+        } catch (err) {
+          console.error(`Could not generate an explanation for employee ${match.employee._id}:`, err);
+        }
+
+        return { ...match, explanation };
+      })
+    );
+
+    for (const match of matchesWithExplanations) {
+      try {
+        const allocation = new Allocation({
+          project: project._id,
+          employee: match.employee._id,
+          score: match.score,
+          verdict: match.verdict,
+          breakdown: match.breakdown,
+          explanation: match.explanation,
+          status: 'proposed',
+        });
+        await allocation.save();
+      } catch (err) {
+        console.error(`Could not save allocation for employee ${match.employee._id}:`, err);
+      }
+    }
+
+    return res.json({
+      matches: matchesWithExplanations.map((match) => ({
+        employee: {
+          _id: match.employee._id,
+          name: match.employee.name,
+          email: match.employee.email,
+          skills: match.employee.skills,
+        },
+        score: match.score,
+        verdict: match.verdict,
+        breakdown: match.breakdown,
+        explanation: match.explanation,
+      })),
+    });
+  } catch (err) {
+    console.error('Could not match employees to project:', err);
+    return res.status(500).json({ message: 'Server error' });
   }
 });
 
