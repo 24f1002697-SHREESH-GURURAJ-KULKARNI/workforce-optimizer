@@ -17,6 +17,9 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
 
+// Mount the employee routes so the API can create, read, update, and delete employees.
+app.use('/api/employees', require('./routes/employees'));
+
 const PORT = process.env.PORT || 5000;
 
 // Connect to MongoDB first, then start the server.

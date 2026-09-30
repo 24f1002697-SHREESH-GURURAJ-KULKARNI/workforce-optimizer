@@ -1,0 +1,9 @@
+﻿{
+  "name": "Asha",
+  "email": "asha@test.com",
+  "skills": [
+    { "skillName": "React", "level": 4 },
+    { "skillName": "Node", "level": 3 }
+  ],
+  "weeklyAvailabilityHours": 25
+}
