@@ -1,0 +1,7 @@
+﻿{
+  "name": "X",
+  "description": "desc",
+  "requiredSkills": [
+    { "skillName": "React", "minLevel": 6 }
+  ]
+}

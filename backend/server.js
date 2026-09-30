@@ -19,6 +19,8 @@ app.get('/api/health', (req, res) => {
 
 // Mount the employee routes so the API can create, read, update, and delete employees.
 app.use('/api/employees', require('./routes/employees'));
+// Mount the project routes so the API can create, read, update, and delete projects.
+app.use('/api/projects', require('./routes/projects'));
 
 const PORT = process.env.PORT || 5000;
 

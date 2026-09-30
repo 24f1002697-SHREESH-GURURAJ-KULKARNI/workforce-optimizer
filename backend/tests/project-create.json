@@ -1,0 +1,9 @@
+﻿{
+  "name": "Task Manager",
+  "description": "Build a MERN task manager with real-time updates",
+  "requiredSkills": [
+    { "skillName": "React", "minLevel": 3 },
+    { "skillName": "Node", "minLevel": 3 },
+    { "skillName": "MongoDB", "minLevel": 2 }
+  ]
+}
